@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ألفا فون | المساعد الصوتي الذكي</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="background-glow glow-1"></div>
+  <div class="background-glow glow-2"></div>
+
+  <div class="container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="brand">
+        <div class="logo-icon">
+          <span>⚡</span>
+        </div>
+        <div>
+          <h1 class="brand-title">ألفا فون</h1>
+          <p class="brand-subtitle">المساعد الصوتي الذكي لخدمة العملاء</p>
+        </div>
+      </div>
+
+      <div class="header-controls">
+        <div class="voice-picker">
+          <label for="voiceSelect">الصوت:</label>
+          <select id="voiceSelect" class="styled-select">
+            <option value="ar-EG-SalmaNeural" selected>سلمى (مصري 👩)</option>
+            <option value="ar-EG-ShakirNeural">شاكر (مصري 👨)</option>
+            <option value="ar-SA-HamedNeural">حامد (سعودي 👨)</option>
+            <option value="ar-SA-ZariyahNeural">زارية (سعودي 👩)</option>
+          </select>
+        </div>
+        <button id="resetBtn" class="btn-secondary" title="مسح الذاكرة وبدء محادثة جديدة">
+          🔄 محادثة جديدة
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <!-- Voice Interaction Center -->
+      <section class="voice-center">
+        <!-- Visualizer Rings / Wave animation -->
+        <div class="visualizer-container" id="visualizerContainer">
+          <div class="ring ring-1"></div>
+          <div class="ring ring-2"></div>
+          <div class="ring ring-3"></div>
+          <button id="micBtn" class="mic-button" title="اضغط للتحدث">
+            <svg class="mic-icon" viewBox="0 0 24 24" width="36" height="36" fill="currentColor">
+              <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
+              <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+            </svg>
+          </button>
+        </div>
+
+        <!-- Equalizer bars animation when playing audio -->
+        <div class="equalizer" id="equalizer">
+          <span class="bar"></span>
+          <span class="bar"></span>
+          <span class="bar"></span>
+          <span class="bar"></span>
+          <span class="bar"></span>
+          <span class="bar"></span>
+        </div>
+
+        <!-- Dynamic Status -->
+        <div class="status-pill" id="statusPill">
+          <span class="status-dot" id="statusDot"></span>
+          <span class="status-text" id="statusText">اضغط على المايك وتحدث باللغة العربية</span>
+        </div>
+      </section>
+
+      <!-- Chat Conversation Feed -->
+      <section class="chat-section">
+        <div class="chat-box" id="chatBox">
+          <div class="chat-message bot-message">
+            <div class="avatar">🤖</div>
+            <div class="message-content">
+              <p>أهلاً بك في متجر <strong>ألفا فون</strong>! 📱</p>
+              <p>أنا المساعد الصوتي لخدمة العملاء، يمكنك سؤالي صوتياً أو كتابياً عن:</p>
+              <ul>
+                <li>أسعار ومواصفات الهواتف (مثل: <em>عايز أرخص سامسونج</em>)</li>
+                <li>سياسات الاسترجاع والضمان (مثل: <em>سياسة استرجاع المنتجات</em>)</li>
+                <li>المقارنة بين الهواتف والموديلات</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- Text Input Fallback Bar -->
+        <form id="chatForm" class="chat-input-bar">
+          <input 
+            type="text" 
+            id="textInput" 
+            class="text-input" 
+            placeholder="اكتب سؤالك هنا أو اضغط على المايك بالأعلى..." 
+            autocomplete="off"
+          />
+          <button type="submit" id="sendBtn" class="send-btn" title="إرسال">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+              <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+            </svg>
+          </button>
+        </form>
+      </section>
+    </main>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
