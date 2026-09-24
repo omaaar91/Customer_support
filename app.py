@@ -1,5 +1,6 @@
 import os
 import sys
+import re
 import base64
 import asyncio
 import tempfile
@@ -112,7 +113,7 @@ Keywords only:"""
 
 
 async def stream_customer_support(user_query: str, voice: str = "ar-EG-SalmaNeural"):
-    """بث الإجابة رمزاً برمز (Streaming) وتوليد الصوت فور الانتهاء"""
+    """بث الإجابة رمزاً برمز (Streaming) وتوليد مقاطع الصوت فور اكتمال كل جملة"""
     try:
         # 1. استخراج كلمات مفتاحية إنجليزية للـ Vector DB بشكل غير متزامن
         keyword_prompt = f"""Convert this user query into 3-4 English search keywords for customer service retrieval.
@@ -150,19 +151,66 @@ Keywords only:"""
 رد خدمة العملاء:"""
 
         full_reply = ""
-        # 4. بث النص كلمة بكلمة فور إنتاجها من الـ LLM
+        sentence_buffer = ""
+        sentence_delimiters = {'.', '!', '؟', '?', '\n'}
+        chunk_idx = 0
+
+        # 4. بث النص كلمة بكلمة وتحويل الجمل المكتملة إلى صوت فوراً
         async for chunk in llm.astream(system_prompt):
             token = chunk.content
-            if token:
-                full_reply += token
-                yield f"data: {json.dumps({'type': 'token', 'content': token}, ensure_ascii=False)}\n\n"
+            if not token:
+                continue
 
-        # 5. حفظ الرد في الذاكرة
+            full_reply += token
+            sentence_buffer += token
+
+            # إرسال رمز النص للمتصفح فوراً
+            yield f"data: {json.dumps({'type': 'token', 'content': token}, ensure_ascii=False)}\n\n"
+
+            # التحقق إذا كانت هناك جملة مكتملة وجاهزة للصوت
+            has_major_punct = any(p in token for p in sentence_delimiters)
+            has_comma_break = (len(sentence_buffer.strip()) >= 35 and any(c in token for c in {',', '،', '؛'}))
+
+            if (has_major_punct and len(sentence_buffer.strip()) >= 12) or has_comma_break:
+                text_to_speak = sentence_buffer.strip()
+                sentence_buffer = ""
+
+                # إزالة علامات الماركداون حتى لا يقرأها النموذج الصوتي
+                clean_text = re.sub(r'[*#_`~|\-]', '', text_to_speak).strip()
+                if clean_text:
+                    try:
+                        audio_b64 = await text_to_speech_base64(clean_text, voice=voice)
+                        if audio_b64:
+                            yield f"data: {json.dumps({'type': 'audio_chunk', 'index': chunk_idx, 'audio_base64': audio_b64}, ensure_ascii=False)}\n\n"
+                            chunk_idx += 1
+                    except Exception as tts_err:
+                        print(f"TTS error on chunk {chunk_idx}: {tts_err}")
+
+        # 5. تحويل أي نص متبقٍ في البفر بعد انتهاء البث
+        if sentence_buffer.strip():
+            clean_text = re.sub(r'[*#_`~|\-]', '', sentence_buffer).strip()
+            if clean_text:
+                try:
+                    audio_b64 = await text_to_speech_base64(clean_text, voice=voice)
+                    if audio_b64:
+                        yield f"data: {json.dumps({'type': 'audio_chunk', 'index': chunk_idx, 'audio_base64': audio_b64}, ensure_ascii=False)}\n\n"
+                except Exception as tts_err:
+                    print(f"TTS error on remaining chunk: {tts_err}")
+
+        # 6. حفظ الرد في الذاكرة
         memory.save_context({"input": user_query}, {"output": full_reply})
 
-        # 6. توليد الصوت عبر Edge-TTS وإرسال الصوت النهائي
-        audio_b64 = await text_to_speech_base64(full_reply, voice=voice)
-        yield f"data: {json.dumps({'type': 'done', 'reply': full_reply, 'audio_base64': audio_b64}, ensure_ascii=False)}\n\n"
+        # 7. توليد الصوت الكامل كضمان أمان تام (Fallback & Replay)
+        full_audio_b64 = None
+        try:
+            clean_full = re.sub(r'[*#_`~|\-]', '', full_reply).strip()
+            if clean_full:
+                full_audio_b64 = await text_to_speech_base64(clean_full, voice=voice)
+        except Exception as tts_full_err:
+            print(f"Error in full audio fallback: {tts_full_err}")
+
+        # 8. إشعار بانتهاء البث مع الصوت الكامل
+        yield f"data: {json.dumps({'type': 'done', 'reply': full_reply, 'audio_base64': full_audio_b64}, ensure_ascii=False)}\n\n"
 
     except Exception as e:
         print(f"Error in stream_customer_support: {e}")

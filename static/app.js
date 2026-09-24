@@ -11,18 +11,146 @@ document.addEventListener("DOMContentLoaded", () => {
   const voiceSelect = document.getElementById("voiceSelect");
   const resetBtn = document.getElementById("resetBtn");
 
-  let currentAudio = null;
   let isListening = false;
   let recognition = null;
+  let activeAudio = null;
+
+  // فك حظر تشغيل الصوت في المتصفح تلقائياً عند أول نقرة
+  function unlockAudioContext() {
+    try {
+      const silentAudio = new Audio("data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=");
+      silentAudio.play().catch(() => {});
+    } catch (e) {}
+  }
+  document.addEventListener("click", unlockAudioContext, { once: true });
 
   // =================================================================
-  // 1. إعداد التعرف على الصوت عبر المتصفح (Web Speech API)
+  // 1. نظام تشغيل الصوت الذكي (يدعم البث السريع + الصوت الكامل كأمان)
+  // =================================================================
+  class VoicePlaybackManager {
+    constructor() {
+      this.queue = [];
+      this.isPlaying = false;
+      this.chunksReceived = 0;
+      this.hasPlayedAnyChunk = false;
+    }
+
+    reset() {
+      this.stop();
+      this.queue = [];
+      this.chunksReceived = 0;
+      this.hasPlayedAnyChunk = false;
+    }
+
+    stop() {
+      this.isPlaying = false;
+      if (activeAudio) {
+        try {
+          activeAudio.pause();
+          activeAudio.currentTime = 0;
+        } catch (e) {}
+        activeAudio = null;
+      }
+      this.queue = [];
+      stopEqualizer();
+    }
+
+    enqueueChunk(b64Audio) {
+      if (!b64Audio) return;
+      this.chunksReceived++;
+      this.queue.push(b64Audio);
+      if (!this.isPlaying) {
+        this.playNext();
+      }
+    }
+
+    playNext() {
+      if (this.queue.length === 0) {
+        this.isPlaying = false;
+        activeAudio = null;
+        stopEqualizer();
+        setStatus("ready", "اضغط على المايك وتحدث باللغة العربية");
+        return;
+      }
+
+      this.isPlaying = true;
+      const b64 = this.queue.shift();
+
+      try {
+        if (activeAudio) {
+          activeAudio.pause();
+        }
+
+        activeAudio = new Audio("data:audio/mp3;base64," + b64);
+        startEqualizer();
+        setStatus("speaking", "المساعد يتحدث الآن... 🔊");
+
+        activeAudio.onended = () => {
+          this.hasPlayedAnyChunk = true;
+          this.playNext();
+        };
+
+        activeAudio.onerror = (err) => {
+          console.warn("Chunk playback error:", err);
+          this.playNext();
+        };
+
+        activeAudio.play().then(() => {
+          this.hasPlayedAnyChunk = true;
+        }).catch((err) => {
+          console.warn("Autoplay blocked for chunk, skipping:", err);
+          this.playNext();
+        });
+      } catch (err) {
+        console.error("Audio error:", err);
+        this.playNext();
+      }
+    }
+
+    // تشغيل ملف صوتي كامل (سواء في حالة عدم وصول أجزاء أو عند الضغط على إعادة الاستماع)
+    playFull(b64Audio) {
+      if (!b64Audio) return;
+      this.stop();
+
+      try {
+        activeAudio = new Audio("data:audio/mp3;base64," + b64Audio);
+        startEqualizer();
+        setStatus("speaking", "المساعد يتحدث الآن... 🔊");
+
+        activeAudio.onended = () => {
+          stopEqualizer();
+          setStatus("ready", "اضغط على المايك وتحدث باللغة العربية");
+          activeAudio = null;
+        };
+
+        activeAudio.onerror = (e) => {
+          console.error("Full audio error", e);
+          stopEqualizer();
+          setStatus("ready", "اضغط على المايك وتحدث باللغة العربية");
+          activeAudio = null;
+        };
+
+        activeAudio.play().catch((err) => {
+          console.warn("Autoplay prevented:", err);
+          stopEqualizer();
+          setStatus("ready", "اضغط على زر 🔊 استماع للرد لسماع الصوت");
+        });
+      } catch (e) {
+        console.error("Error playing full audio:", e);
+      }
+    }
+  }
+
+  const voiceManager = new VoicePlaybackManager();
+
+  // =================================================================
+  // 2. إعداد التعرف على الصوت عبر المتصفح (Web Speech API)
   // =================================================================
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
   if (SpeechRecognition) {
     recognition = new SpeechRecognition();
-    recognition.lang = "ar-EG"; // اللهجة المصرية
+    recognition.lang = "ar-EG";
     recognition.continuous = false;
     recognition.interimResults = false;
 
@@ -52,20 +180,16 @@ document.addEventListener("DOMContentLoaded", () => {
     recognition.onend = () => {
       stopListening();
     };
-  } else {
-    console.warn("Web Speech API غير مدعوم في هذا المتصفح.");
   }
 
   function startListening() {
+    unlockAudioContext();
     if (!recognition) {
-      alert("متصفحك لا يدعم التعرف المباشر على الصوت. يُفضل استخدام متصفح Chrome أو Edge، أو كتابة السؤال بالأسفل.");
+      alert("متصفحك لا يدعم التعرف المباشر على الصوت. يُفضل استخدام Chrome أو Edge، أو كتابة السؤال بالأسفل.");
       return;
     }
-    // إيقاف أي صوت شغال حالياً
-    if (currentAudio) {
-      currentAudio.pause();
-      stopEqualizer();
-    }
+    voiceManager.stop();
+
     try {
       recognition.start();
     } catch (e) {
@@ -81,8 +205,8 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  // زر المايك
   micBtn.addEventListener("click", () => {
+    unlockAudioContext();
     if (isListening) {
       recognition && recognition.stop();
       stopListening();
@@ -92,10 +216,13 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // =================================================================
-  // 2. إرسال الرسالة إلى الـ API مع تدفق النص المباشر (Streaming)
+  // 3. إرسال الرسالة إلى الـ API مع تدفق النص والصوت الفوري
   // =================================================================
   async function handleUserMessage(message) {
     if (!message) return;
+
+    unlockAudioContext();
+    voiceManager.reset();
 
     // إضافة رسالة المستخدم في الشات
     addMessageToChat("user", message);
@@ -130,7 +257,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
         buffer += decoder.decode(value, { stream: true });
         const events = buffer.split("\n\n");
-        buffer = events.pop(); // الاحتفاظ بالبيانات غير المكتملة
+        buffer = events.pop();
 
         for (const event of events) {
           const trimmed = event.trim();
@@ -145,15 +272,23 @@ document.addEventListener("DOMContentLoaded", () => {
                 setStatus("thinking", "المساعد يكتب الرد الآن... ⚡");
               }
               botMsg.appendToken(data.content);
+            } else if (data.type === "audio_chunk") {
+              // مقطع صوتي سريع للجملة الحالية
+              if (data.audio_base64) {
+                voiceManager.enqueueChunk(data.audio_base64);
+              }
             } else if (data.type === "done") {
               botMsg.finish(data.reply, data.audio_base64);
-              if (data.audio_base64) {
-                playAudioBase64(data.audio_base64);
-              } else {
+
+              // إذا لم تكن الأجزاء قد تم تشغيلها، شغل الصوت الكامل كـ Fallback فوري
+              if (!voiceManager.hasPlayedAnyChunk && !voiceManager.isPlaying && data.audio_base64) {
+                voiceManager.playFull(data.audio_base64);
+              } else if (!voiceManager.isPlaying) {
                 setStatus("ready", "اضغط على المايك وتحدث باللغة العربية");
               }
             } else if (data.type === "error") {
               botMsg.showError(data.message || "حدث خطأ أثناء معالجة الطلب.");
+              voiceManager.stop();
               setStatus("ready", "اضغط على المايك وتحدث باللغة العربية");
             }
           } catch (e) {
@@ -163,8 +298,9 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
     } catch (err) {
-      console.error(err);
+      console.error("Chat error:", err);
       botMsg.showError("عذراً، حدث خطأ أثناء الاتصال بالخادم. يرجى المحاولة مرة أخرى.");
+      voiceManager.stop();
       setStatus("ready", "اضغط على المايك وتحدث باللغة العربية");
     }
   }
@@ -208,7 +344,7 @@ document.addEventListener("DOMContentLoaded", () => {
         textBody.innerHTML = formatted;
         chatBox.scrollTop = chatBox.scrollHeight;
       },
-      finish(fullText, audioB64) {
+      finish(fullText, fullAudioB64) {
         if (cursor.parentNode) {
           cursor.remove();
         }
@@ -220,11 +356,15 @@ document.addEventListener("DOMContentLoaded", () => {
           .join("");
         textBody.innerHTML = formatted;
 
-        if (audioB64) {
+        // زر إعادة الاستماع لكامل الرد
+        if (fullAudioB64) {
           const replayBtn = document.createElement("button");
           replayBtn.className = "replay-audio-btn";
           replayBtn.innerHTML = "🔊 استماع للرد";
-          replayBtn.onclick = () => playAudioBase64(audioB64);
+          replayBtn.onclick = () => {
+            unlockAudioContext();
+            voiceManager.playFull(fullAudioB64);
+          };
           contentDiv.appendChild(replayBtn);
         }
         chatBox.scrollTop = chatBox.scrollHeight;
@@ -240,38 +380,8 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // =================================================================
-  // 3. تشغيل الصوت في المتصفح فائق السرعة
+  // 4. التحكم في مظهر موجات الصوت (Equalizer)
   // =================================================================
-  function playAudioBase64(b64Data) {
-    if (currentAudio) {
-      currentAudio.pause();
-    }
-
-    currentAudio = new Audio("data:audio/mp3;base64," + b64Data);
-
-    currentAudio.onplay = () => {
-      startEqualizer();
-      setStatus("speaking", "المساعد يتحدث الآن... 🔊");
-    };
-
-    currentAudio.onended = () => {
-      stopEqualizer();
-      setStatus("ready", "جاهز للاستماع... اضغط على المايك");
-    };
-
-    currentAudio.onerror = (e) => {
-      console.error("Audio error", e);
-      stopEqualizer();
-      setStatus("ready", "اضغط على المايك وتحدث باللغة العربية");
-    };
-
-    currentAudio.play().catch(e => {
-      console.warn("Autoplay was prevented by browser policy", e);
-      stopEqualizer();
-      setStatus("ready", "اضغط على زر الاستماع بجانب الرسالة لسماع الرد");
-    });
-  }
-
   function startEqualizer() {
     equalizer.classList.add("active");
   }
@@ -281,7 +391,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // =================================================================
-  // 4. تحديث حالة الواجهة (Status Pill)
+  // 5. تحديث حالة الواجهة (Status Pill)
   // =================================================================
   function setStatus(state, text) {
     statusDot.className = "status-dot";
@@ -292,7 +402,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // =================================================================
-  // 5. إضافة الرسائل لصندوق المحادثة
+  // 6. إضافة الرسائل لصندوق المحادثة
   // =================================================================
   function addMessageToChat(sender, text, audioB64 = null) {
     const msgDiv = document.createElement("div");
@@ -305,24 +415,23 @@ document.addEventListener("DOMContentLoaded", () => {
     const contentDiv = document.createElement("div");
     contentDiv.className = "message-content";
 
-    // تحويل الأسطر الجديدة إلى فقرات
     const formatted = text.split("\n").filter(l => l.trim() !== "").map(p => `<p>${escapeHTML(p)}</p>`).join("");
     contentDiv.innerHTML = formatted;
 
-    // زر إعادة الاستماع للصوت
     if (audioB64) {
       const replayBtn = document.createElement("button");
       replayBtn.className = "replay-audio-btn";
       replayBtn.innerHTML = "🔊 استماع للرد";
-      replayBtn.onclick = () => playAudioBase64(audioB64);
+      replayBtn.onclick = () => {
+        unlockAudioContext();
+        voiceManager.playFull(audioB64);
+      };
       contentDiv.appendChild(replayBtn);
     }
 
     msgDiv.appendChild(avatar);
     msgDiv.appendChild(contentDiv);
     chatBox.appendChild(msgDiv);
-
-    // سكرول للأسفل
     chatBox.scrollTop = chatBox.scrollHeight;
   }
 
@@ -336,22 +445,25 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // =================================================================
-  // 6. التعامل مع الإدخال الكتابي
+  // 7. التعامل مع الإدخال الكتابي
   // =================================================================
   chatForm.addEventListener("submit", (e) => {
     e.preventDefault();
     const query = textInput.value.trim();
     if (query) {
+      unlockAudioContext();
       textInput.value = "";
+      voiceManager.stop();
       handleUserMessage(query);
     }
   });
 
   // =================================================================
-  // 7. زر مسح الذاكرة
+  // 8. زر مسح الذاكرة
   // =================================================================
   resetBtn.addEventListener("click", async () => {
     if (confirm("هل ترغب في بدء محادثة جديدة ومسح الذاكرة؟")) {
+      voiceManager.stop();
       try {
         await fetch("/api/reset", { method: "POST" });
         chatBox.innerHTML = `
